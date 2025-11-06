@@ -1,312 +1,284 @@
-import { Candidate } from '../types/candidate';
+// backend.gs - ATUALIZADO COM NOVAS COLUNAS
 
-function extractSpreadsheetId(input: string | undefined): string | undefined {
-  if (!input) return undefined;
+const SPREADSHEET_ID = 'SEU_ID_DA_PLANILHA_PRINCIPAL';
+const SHEET_CANDIDATOS = 'CANDIDATOS';
+const SHEET_USUARIOS = 'USUARIOS';
 
-  const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (match) {
-    return match[1];
+function getSpreadsheet() {
+  return SpreadsheetApp.openById(SPREADSHEET_ID);
+}
+
+// ================== FUNÇÕES DE USUÁRIOS ==================
+function getUserRole(e) {
+  const userEmail = e.parameter.email;
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_USUARIOS);
+  
+  if (!userSheet) {
+    return createResponse({error: 'Planilha de usuários não encontrada'}, 404);
   }
-
-  if (input.includes('/') || input.includes('?') || input.includes('edit') || input.includes('sharing')) {
-    console.error('Invalid SPREADSHEET_ID format. Use only the ID, not the full URL.');
-    return undefined;
-  }
-
-  return input;
-}
-
-const SPREADSHEET_ID = extractSpreadsheetId(import.meta.env.VITE_GOOGLE_SHEETS_ID);
-
-let cachedAccessToken: string | null = null;
-let cachedSheetName: string | null = null;
-
-export function setAccessToken(token: string) {
-  cachedAccessToken = token;
-}
-
-export function getAccessToken(): string | null {
-  return cachedAccessToken;
-}
-
-async function getFirstSheetName(): Promise<string | null> {
-  if (cachedSheetName) return cachedSheetName;
-
-  if (!SPREADSHEET_ID || !cachedAccessToken) return null;
-
-  try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties.title`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${cachedAccessToken}`,
-      },
-    });
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (data.sheets && data.sheets.length > 0) {
-      cachedSheetName = data.sheets[0].properties.title;
-      console.log('First sheet name:', cachedSheetName);
-      return cachedSheetName;
+  
+  const data = userSheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  const emailIndex = headers.indexOf('Email');
+  const roleIndex = headers.indexOf('Role');
+  const ativoIndex = headers.indexOf('Ativo');
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (row[emailIndex] === userEmail && row[ativoIndex] === true) {
+      return createResponse({
+        role: row[roleIndex],
+        email: row[emailIndex],
+        nome: row[headers.indexOf('Nome')]
+      });
     }
-  } catch (error) {
-    console.error('Error getting sheet name:', error);
   }
+  
+  return createResponse({error: 'Usuário não encontrado ou inativo'}, 404);
+}
 
+function getAllUsers(e) {
+  const requesterEmail = e.parameter.requesterEmail;
+  const requesterRole = getUserRoleFromSheet(requesterEmail);
+  
+  if (requesterRole !== 'admin') {
+    return createResponse({error: 'Acesso negado. Apenas administradores.'}, 403);
+  }
+  
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_USUARIOS);
+  const data = userSheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  const users = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const user = {};
+    headers.forEach((header, index) => {
+      user[header] = row[index];
+    });
+    users.push(user);
+  }
+  
+  return createResponse({users});
+}
+
+function updateUserRole(e) {
+  const { requesterEmail, targetEmail, newRole } = e.parameter;
+  
+  const requesterRole = getUserRoleFromSheet(requesterEmail);
+  if (requesterRole !== 'admin') {
+    return createResponse({error: 'Acesso negado. Apenas administradores.'}, 403);
+  }
+  
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_USUARIOS);
+  const data = userSheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  const emailIndex = headers.indexOf('Email');
+  const roleIndex = headers.indexOf('Role');
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][emailIndex] === targetEmail) {
+      userSheet.getRange(i + 1, roleIndex + 1).setValue(newRole);
+      return createResponse({success: true, message: 'Role atualizada com sucesso'});
+    }
+  }
+  
+  return createResponse({error: 'Usuário não encontrado'}, 404);
+}
+
+function getUserRoleFromSheet(email) {
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_USUARIOS);
+  const data = userSheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  const emailIndex = headers.indexOf('Email');
+  const roleIndex = headers.indexOf('Role');
+  const ativoIndex = headers.indexOf('Ativo');
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (row[emailIndex] === email && row[ativoIndex] === true) {
+      return row[roleIndex];
+    }
+  }
   return null;
 }
 
-async function updateSheet(range: string, values: any[][]): Promise<boolean> {
-  if (!SPREADSHEET_ID || !cachedAccessToken) {
-    console.error('Missing configuration for write operation');
-    return false;
-  }
-
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`;
-
+// ================== FUNÇÕES DE CANDIDATOS ==================
+function getCandidates(e) {
   try {
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${cachedAccessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ values }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Error updating sheet:', errorData);
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const ss = getSpreadsheet();
+    const candidateSheet = ss.getSheetByName(SHEET_CANDIDATOS);
+    
+    if (!candidateSheet) {
+      return createResponse({error: 'Planilha de candidatos não encontrada'}, 404);
     }
-
-    return true;
+    
+    const data = candidateSheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    const candidates = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const candidate = {};
+      
+      // Mapear todas as colunas baseado nos headers
+      headers.forEach((header, index) => {
+        candidate[header] = row[index];
+      });
+      
+      candidates.push(candidate);
+    }
+    
+    return createResponse({candidates, headers});
   } catch (error) {
-    console.error('Error updating sheet:', error);
-    return false;
+    return createResponse({error: error.message}, 500);
   }
 }
 
-export async function fetchCandidates(): Promise<Candidate[]> {
-  if (!SPREADSHEET_ID || SPREADSHEET_ID === 'your_spreadsheet_id_here') {
-    console.error('Google Sheets ID not configured correctly.');
-    console.error('IMPORTANT: Use only the spreadsheet ID, not the full URL.');
-    console.error('Example: 1NaetcGUJ5_HYsQ-NCK3V3zFEnDfyfwmjX4wrUwI7NFw');
-    console.error('NOT: https://docs.google.com/spreadsheets/d/1NaetcGUJ5.../edit?usp=sharing');
-    throw new Error('Configure o ID da planilha corretamente. Use apenas o ID, não a URL completa.');
-  }
-
-  if (!cachedAccessToken) {
-    console.warn('No access token available. Please login first.');
-    return [];
-  }
-
+function addCandidate(e) {
   try {
-    console.log('Fetching candidates from Google Sheets...');
-
-    // Primeiro tenta obter o nome real da primeira aba
-    const sheetName = await getFirstSheetName();
-
-    let range = 'A:Z';
-    let url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}`;
-
-    // Se conseguiu o nome da aba, usa ele
-    if (sheetName) {
-      range = `${sheetName}!A:Z`;
-      url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`;
-      console.log('Using sheet:', sheetName);
+    const ss = getSpreadsheet();
+    const candidateSheet = ss.getSheetByName(SHEET_CANDIDATOS);
+    
+    if (!candidateSheet) {
+      return createResponse({error: 'Planilha de candidatos não encontrada'}, 404);
     }
-
-    let response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${cachedAccessToken}`,
-      },
+    
+    const data = candidateSheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    // Verificar se CPF já existe
+    const cpfIndex = headers.indexOf('CPF');
+    const newCPF = e.parameter.CPF;
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][cpfIndex] === newCPF) {
+        return createResponse({error: 'CPF já cadastrado'}, 400);
+      }
+    }
+    
+    // Preparar nova linha com as novas colunas
+    const newRow = [];
+    headers.forEach(header => {
+      switch(header) {
+        case 'DataCadastro':
+          newRow.push(new Date());
+          break;
+        case 'Status':
+          newRow.push('Ativo');
+          break;
+        default:
+          newRow.push(e.parameter[header] || '');
+      }
     });
-
-    // Se falhar e tinha nome da aba, tenta sem nome
-    if (!response.ok && response.status === 400 && sheetName) {
-      console.log('Trying without sheet name...');
-      range = 'A:Z';
-      url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}`;
-      response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${cachedAccessToken}`,
-        },
-      });
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Google Sheets API error:', errorData);
-
-      if (response.status === 403) {
-        throw new Error('Acesso negado. Verifique se a API Key está correta e se a Google Sheets API está habilitada.');
-      }
-      if (response.status === 404) {
-        throw new Error('Planilha não encontrada. Verifique o ID da planilha.');
-      }
-
-      throw new Error(`API Error: ${response.status} - ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    const rows = data.values;
-
-    if (!rows || rows.length < 2) {
-      console.warn('No candidate data found');
-      return [];
-    }
-
-    const headers = rows[0];
-    console.log('Available columns:', headers);
-
-    const candidates: Candidate[] = [];
-
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-
-      if (!row || row.every(cell => !cell || cell.toString().trim() === '')) {
-        continue;
-      }
-
-      const rowData = new Array(19).fill('');
-      for (let j = 0; j < row.length; j++) {
-        rowData[j] = row[j] || '';
-      }
-
-      const candidate: Candidate = {
-        submissionDate: rowData[0],
-        name: rowData[1]?.trim() || '',
-        cpf: rowData[2],
-        area: (rowData[3] as 'Administrativa' | 'Assistencial') || '',
-        cargoAdministrativo: rowData[4],
-        cargoAssistencial: rowData[5],
-        admCurriculo: rowData[6],
-        admDiploma: rowData[7],
-        admDocumentos: rowData[8],
-        admCursos: rowData[9],
-        assistCurriculo: rowData[10],
-        assistDiploma: rowData[11],
-        assistCarteira: rowData[12],
-        assistCursos: rowData[13],
-        assistDocumentos: rowData[14],
-        registrationNumber: rowData[15] || `temp-${i + 1}`,
-        statusTriagem: (rowData[16] as 'Classificado' | 'Desclassificado' | 'Revisar') || '',
-        dataHoraTriagem: rowData[17],
-        analistaTriagem: rowData[18],
-      };
-
-      if (candidate.name) {
-        candidates.push(candidate);
-      }
-    }
-
-    console.log(`${candidates.length} candidates loaded successfully`);
-    return candidates;
+    
+    candidateSheet.appendRow(newRow);
+    
+    return createResponse({success: true, message: 'Candidato cadastrado com sucesso'});
   } catch (error) {
-    if (error instanceof TypeError && error.message.includes('fetch')) {
-      console.error('Erro de rede ao conectar com Google Sheets. Verifique sua conexão.');
-      throw new Error('Erro de conexão. Verifique sua internet e as configurações do Google Sheets.');
-    }
-    console.error('Critical error fetching candidates:', error);
-    throw error;
+    return createResponse({error: error.message}, 500);
   }
 }
 
-export async function updateCandidateStatus(
-  registrationNumber: string,
-  status: 'Classificado' | 'Desclassificado' | 'Revisar',
-  analystEmail: string
-): Promise<boolean> {
-  if (!SPREADSHEET_ID) {
-    console.error('Google Sheets ID not configured');
-    return false;
-  }
-
-  if (!cachedAccessToken) {
-    console.error('Access token not available for write operation');
-    return false;
-  }
-
+function updateCandidate(e) {
   try {
-    // Obtém o nome da primeira aba
-    const sheetName = await getFirstSheetName();
-
-    let range = 'A:Z';
-    let readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}`;
-
-    if (sheetName) {
-      range = `${sheetName}!A:Z`;
-      readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`;
-    }
-
-    let readResponse = await fetch(readUrl, {
-      headers: {
-        'Authorization': `Bearer ${cachedAccessToken}`,
-      },
-    });
-
-    // Se falhar e tinha nome da aba, tenta sem nome
-    if (!readResponse.ok && readResponse.status === 400 && sheetName) {
-      range = 'A:Z';
-      readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}`;
-      readResponse = await fetch(readUrl, {
-        headers: {
-          'Authorization': `Bearer ${cachedAccessToken}`,
-        },
-      });
-    }
-    if (!readResponse.ok) {
-      throw new Error(`Failed to read sheet: ${readResponse.statusText}`);
-    }
-
-    const data = await readResponse.json();
-    const rows = data.values;
-
-    if (!rows || rows.length < 2) {
-      throw new Error('No data found in sheet');
-    }
-
-    let rowIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][15] === registrationNumber) {
-        rowIndex = i + 1;
-        break;
+    const { candidateCPF, ...updateData } = e.parameter;
+    const ss = getSpreadsheet();
+    const candidateSheet = ss.getSheetByName(SHEET_CANDIDATOS);
+    
+    const data = candidateSheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    const cpfIndex = headers.indexOf('CPF');
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][cpfIndex] === candidateCPF) {
+        headers.forEach((header, index) => {
+          if (updateData[header] !== undefined && header !== 'CPF') {
+            candidateSheet.getRange(i + 1, index + 1).setValue(updateData[header]);
+          }
+        });
+        
+        return createResponse({success: true, message: 'Candidato atualizado com sucesso'});
       }
     }
+    
+    return createResponse({error: 'Candidato não encontrado'}, 404);
+  } catch (error) {
+    return createResponse({error: error.message}, 500);
+  }
+}
 
-    if (rowIndex === -1) {
-      console.error(`Candidate with registration number ${registrationNumber} not found`);
-      return false;
+function deleteCandidate(e) {
+  try {
+    const candidateCPF = e.parameter.candidateCPF;
+    const ss = getSpreadsheet();
+    const candidateSheet = ss.getSheetByName(SHEET_CANDIDATOS);
+    
+    const data = candidateSheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    const cpfIndex = headers.indexOf('CPF');
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][cpfIndex] === candidateCPF) {
+        candidateSheet.deleteRow(i + 1);
+        return createResponse({success: true, message: 'Candidato excluído com sucesso'});
+      }
     }
+    
+    return createResponse({error: 'Candidato não encontrado'}, 404);
+  } catch (error) {
+    return createResponse({error: error.message}, 500);
+  }
+}
 
-    const now = new Date().toLocaleString('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+// ================== FUNÇÃO PRINCIPAL ==================
+function doPost(e) {
+  return handleRequest(e);
+}
 
-    // Usa o mesmo range que foi usado para ler (com ou sem nome da aba)
-    const sheetPrefix = range.includes('!') ? range.split('!')[0] + '!' : '';
-    const updateRange = `${sheetPrefix}Q${rowIndex}:S${rowIndex}`;
-    const values = [[status, now, analystEmail]];
+function doGet(e) {
+  return handleRequest(e);
+}
 
-    const success = await updateSheet(updateRange, values);
-
-    if (success) {
-      console.log(`Candidate ${registrationNumber} status updated to ${status}`);
+function handleRequest(e) {
+  try {
+    const action = e.parameter.action;
+    
+    const actions = {
+      // Usuários
+      'getUserRole': getUserRole,
+      'getAllUsers': getAllUsers,
+      'updateUserRole': updateUserRole,
+      
+      // Candidatos
+      'getCandidates': getCandidates,
+      'addCandidate': addCandidate,
+      'updateCandidate': updateCandidate,
+      'deleteCandidate': deleteCandidate
+    };
+    
+    if (actions[action]) {
+      return actions[action](e);
     } else {
-      console.error('Failed to update candidate status');
+      return createResponse({error: 'Ação não encontrada'}, 404);
     }
-
-    return success;
-
   } catch (error) {
-    console.error('Error updating candidate status:', error);
-    return false;
+    return createResponse({error: error.message}, 500);
   }
+}
+
+function createResponse(data, statusCode = 200) {
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON)
+    .setStatusCode(statusCode);
 }
