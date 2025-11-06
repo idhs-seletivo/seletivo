@@ -4,7 +4,7 @@ import { candidateService } from '../services/candidateService';
 import AssignmentPanel from './AssignmentPanel';
 import AnalystDashboard from './AnalystDashboard';
 import CsvImportTool from './CsvImportTool';
-import { BarChart3, Users, Upload } from 'lucide-react';
+import { BarChart3, Users, Upload, CheckCircle } from 'lucide-react';
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -14,18 +14,70 @@ export default function AdminDashboard() {
     pendente: 0,
     em_analise: 0,
     concluido: 0,
+    total_triados: 0 // Nova estatística
   });
+
+  // Chave para armazenar no localStorage
+  const TOTAL_TRIADOS_KEY = 'total_candidatos_triados';
 
   useEffect(() => {
     loadStats();
+    loadTotalTriados();
   }, []);
 
   async function loadStats() {
     try {
       const data = await candidateService.getStatistics();
-      setStats(data);
+      setStats(prev => ({
+        ...data,
+        total_triados: prev.total_triados // Mantém o valor atual de total_triados
+      }));
     } catch (error) {
       console.error('Erro ao carregar estatísticas:', error);
+    }
+  }
+
+  function loadTotalTriados() {
+    try {
+      const savedTotal = localStorage.getItem(TOTAL_TRIADOS_KEY);
+      if (savedTotal) {
+        const totalTriados = parseInt(savedTotal, 10);
+        setStats(prev => ({
+          ...prev,
+          total_triados: totalTriados
+        }));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar total de triados:', error);
+    }
+  }
+
+  function updateTotalTriados() {
+    try {
+      // Incrementa o total de triados
+      const currentTotal = stats.total_triados + 1;
+      
+      // Atualiza o estado
+      setStats(prev => ({
+        ...prev,
+        total_triados: currentTotal
+      }));
+
+      // Salva no localStorage
+      localStorage.setItem(TOTAL_TRIADOS_KEY, currentTotal.toString());
+    } catch (error) {
+      console.error('Erro ao atualizar total de triados:', error);
+    }
+  }
+
+  // Função para resetar o contador (opcional - para admin)
+  function resetTotalTriados() {
+    if (window.confirm('Tem certeza que deseja resetar o contador de candidatos triados? Esta ação não pode ser desfeita.')) {
+      localStorage.setItem(TOTAL_TRIADOS_KEY, '0');
+      setStats(prev => ({
+        ...prev,
+        total_triados: 0
+      }));
     }
   }
 
@@ -38,15 +90,25 @@ export default function AdminDashboard() {
               <h1 className="text-2xl font-bold text-gray-800">Sistema de Triagem</h1>
               <p className="text-sm text-gray-600">Admin: {user?.name}</p>
             </div>
-            <button
-              onClick={logout}
-              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
-            >
-              Sair
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={resetTotalTriados}
+                className="px-3 py-1 text-xs bg-red-100 text-red-700 hover:bg-red-200 rounded transition-colors"
+                title="Resetar contador de triados"
+              >
+                Resetar Contador
+              </button>
+              <button
+                onClick={logout}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Sair
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-4 mt-4">
+          {/* Grid de Estatísticas Atualizado */}
+          <div className="grid grid-cols-5 gap-4 mt-4">
             <div className="bg-gray-50 rounded-lg p-4">
               <div className="text-sm text-gray-600">Total de Candidatos</div>
               <div className="text-2xl font-bold text-gray-800">{stats.total}</div>
@@ -62,6 +124,16 @@ export default function AdminDashboard() {
             <div className="bg-green-50 rounded-lg p-4">
               <div className="text-sm text-green-800">Concluído</div>
               <div className="text-2xl font-bold text-green-800">{stats.concluido}</div>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-4 border-2 border-purple-200">
+              <div className="flex items-center gap-2 text-sm text-purple-800">
+                <CheckCircle className="w-4 h-4" />
+                Total Triados
+              </div>
+              <div className="text-2xl font-bold text-purple-800">{stats.total_triados}</div>
+              <div className="text-xs text-purple-600 mt-1">
+                Desde o início do sistema
+              </div>
             </div>
           </div>
         </div>
@@ -110,10 +182,16 @@ export default function AdminDashboard() {
         {activeTab === 'allocation' && (
           <AssignmentPanel
             adminId={user?.id || ''}
-            onAssignmentComplete={loadStats}
+            onAssignmentComplete={() => {
+              loadStats();
+              // Atualiza o total de triados quando houver conclusões
+              // Você pode chamar updateTotalTriados() quando um candidato for classificado/desclassificado
+            }}
           />
         )}
-        {activeTab === 'my-candidates' && <AnalystDashboard />}
+        {activeTab === 'my-candidates' && (
+          <AnalystDashboard onCandidateTriaged={updateTotalTriados} />
+        )}
       </div>
     </div>
   );
