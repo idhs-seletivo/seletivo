@@ -107,6 +107,11 @@ const filterData = (data: any[], filters?: CandidateFilters): any[] => {
   });
 };
 
+// Função auxiliar para gerar IDs
+const generateId = (): string => {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+};
+
 export const candidateService = {
   async getCandidates(
     page: number = 1,
@@ -291,7 +296,7 @@ export const candidateService = {
     try {
       const newCandidate = {
         ...candidate,
-        id: this.generateId(),
+        id: generateId(),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -392,10 +397,5 @@ export const candidateService = {
       console.error('Erro ao buscar candidatos:', error);
       throw error;
     }
-  },
-
-  // Função auxiliar para gerar IDs
-  private generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 };
