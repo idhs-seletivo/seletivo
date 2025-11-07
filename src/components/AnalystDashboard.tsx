@@ -4,7 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { Loader2, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 import DocumentViewer from './DocumentViewer';
 
-export default function AnalystDashboard() {
+interface AnalystDashboardProps {
+  onCandidateTriaged?: () => void;
+}
+
+export default function AnalystDashboard({ onCandidateTriaged }: AnalystDashboardProps) {
   const { user, logout } = useAuth();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
@@ -60,6 +64,10 @@ export default function AnalystDashboard() {
       await candidateService.updateCandidateStatus(selectedCandidate.id, status);
       await loadCandidates();
       await loadStats();
+
+      if (status === 'concluido' && onCandidateTriaged) {
+        onCandidateTriaged();
+      }
     } catch (error) {
       console.error('Erro ao atualizar status:', error);
       alert('Erro ao atualizar status do candidato');
@@ -150,7 +158,7 @@ export default function AnalystDashboard() {
                       : 'bg-gray-50 border-2 border-transparent hover:border-gray-300'
                   }`}
                 >
-                  <div className="font-semibold text-gray-800 text-sm">{candidate.name}</div>
+                  <div className="font-semibold text-gray-800 text-sm">{candidate.NOMECOMPLETO || candidate.name}</div>
                   <div className="text-xs text-gray-600 mt-1">
                     {candidate.registration_number}
                   </div>

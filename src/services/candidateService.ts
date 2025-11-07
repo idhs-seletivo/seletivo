@@ -1,9 +1,8 @@
-// src/services/candidateService.ts
-
 export interface Candidate {
   id: string;
   registration_number: string;
   NOMECOMPLETO: string;
+  name?: string;
   NOMESOCIAL?: string;
   CPF: string;
   VAGAPCD: string;
@@ -16,8 +15,7 @@ export interface Candidate {
   DIPLOMACERTIFICADO?: string;
   DOCUMENTOSCONSELHO?: string;
   ESPECIALIZACOESCURSOS?: string;
-  
-  // Campos do sistema
+
   status: 'pendente' | 'em_analise' | 'concluido';
   assigned_to?: string;
   assigned_at?: string;
@@ -45,37 +43,72 @@ export interface CandidateFilters {
   VAGAPCD?: string;
 }
 
-// Serviço para Google Sheets - substitua com sua implementação real
 class GoogleSheetsService {
-  private spreadsheetId: string;
-  private sheetName: string = 'Candidates';
+  private scriptUrl: string;
 
   constructor() {
-    this.spreadsheetId = process.env.GOOGLE_SHEETS_ID || '';
+    this.scriptUrl = 'https://script.google.com/macros/s/AKfycbzeUN52MaVkpQsORTIIiAkhHSVrlVR82UrISGLOoeyWsHCJlseTPS1Te9Mst24AcfpBhA/exec';
   }
 
-  async getRows(): Promise<any[]> {
-    // Implemente a lógica para buscar dados do Google Sheets
-    // Exemplo básico - substitua pela sua implementação real
+  async fetchData(action: string, data?: any): Promise<any> {
+    try {
+      const url = new URL(this.scriptUrl);
+      url.searchParams.append('action', action);
+
+      if (data) {
+        Object.keys(data).forEach(key => {
+          url.searchParams.append(key, data[key]);
+        });
+      }
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro HTTP: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Erro na comunicação com Google Apps Script:', error);
+      throw error;
+    }
+  }
+
+  async getCandidates(): Promise<Candidate[]> {
+    const result = await this.fetchData('getCandidates');
+    if (result.candidates) {
+      return result.candidates.map((candidate: any) => ({
+        ...candidate,
+        id: candidate.CPF || candidate.id,
+        registration_number: candidate.CPF || candidate.registration_number,
+        name: candidate.NOMECOMPLETO || candidate.name,
+        status: candidate.status || 'pendente',
+      }));
+    }
     return [];
   }
 
-  async updateRow(id: string, updates: any): Promise<void> {
-    // Implemente a lógica para atualizar uma linha
+  async updateCandidate(cpf: string, updates: any): Promise<void> {
+    await this.fetchData('updateCandidate', {
+      candidateCPF: cpf,
+      ...updates
+    });
   }
 
-  async insertRow(data: any): Promise<void> {
-    // Implemente a lógica para inserir uma nova linha
+  async deleteCandidate(cpf: string): Promise<void> {
+    await this.fetchData('deleteCandidate', { candidateCPF: cpf });
   }
 
-  async deleteRow(id: string): Promise<void> {
-    // Implemente a lógica para deletar uma linha
+  async addCandidate(candidate: any): Promise<void> {
+    await this.fetchData('addCandidate', candidate);
   }
 }
 
 const sheetsService = new GoogleSheetsService();
 
-// Funções auxiliares para simular a lógica do Supabase
 const filterData = (data: any[], filters?: CandidateFilters): any[] => {
   if (!filters) return data;
 
@@ -85,7 +118,7 @@ const filterData = (data: any[], filters?: CandidateFilters): any[] => {
     if (filters.CARGOPRETENDIDO && item.CARGOPRETENDIDO !== filters.CARGOPRETENDIDO) return false;
     if (filters.VAGAPCD && item.VAGAPCD !== filters.VAGAPCD) return false;
     if (filters.assignedTo && item.assigned_to !== filters.assignedTo) return false;
-    
+
     if (filters.search) {
       const searchTerm = filters.search.toLowerCase();
       const searchableFields = [
@@ -93,21 +126,21 @@ const filterData = (data: any[], filters?: CandidateFilters): any[] => {
         item.NOMESOCIAL,
         item.CPF,
         item.CARGOPRETENDIDO,
-        item.registration_number
+        item.registration_number,
+        item.name
       ];
-      
-      const hasMatch = searchableFields.some(field => 
+
+      const hasMatch = searchableFields.some(field =>
         field && field.toString().toLowerCase().includes(searchTerm)
       );
-      
+
       if (!hasMatch) return false;
     }
-    
+
     return true;
   });
 };
 
-// Função auxiliar para gerar IDs
 const generateId = (): string => {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 };
@@ -120,21 +153,20 @@ export const candidateService = {
     userId?: string
   ): Promise<PaginatedResponse<Candidate>> {
     try {
-      // Buscar dados do Google Sheets
-      const allData = await sheetsService.getRows();
-      
-      // Aplicar filtros
+      const allData = await sheetsService.getCandidates();
+
       let filteredData = filterData(allData, filters);
-      
-      // Aplicar filtro de usuário se fornecido
+
       if (userId && filters?.assignedTo === undefined) {
         filteredData = filteredData.filter(item => item.assigned_to === userId);
       }
-      
-      // Ordenar por data de criação (mais recente primeiro)
-      filteredData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      
-      // Paginação
+
+      filteredData.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+
       const from = (page - 1) * pageSize;
       const to = from + pageSize;
       const paginatedData = filteredData.slice(from, to);
@@ -154,8 +186,8 @@ export const candidateService = {
 
   async getCandidateById(id: string): Promise<Candidate | null> {
     try {
-      const allData = await sheetsService.getRows();
-      return allData.find(item => item.id === id) || null;
+      const allData = await sheetsService.getCandidates();
+      return allData.find(item => item.id === id || item.CPF === id) || null;
     } catch (error) {
       console.error('Erro ao buscar candidato por ID:', error);
       throw error;
@@ -164,7 +196,7 @@ export const candidateService = {
 
   async getCandidateByCPF(cpf: string): Promise<Candidate | null> {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       return allData.find(item => item.CPF === cpf) || null;
     } catch (error) {
       console.error('Erro ao buscar candidato por CPF:', error);
@@ -177,17 +209,18 @@ export const candidateService = {
     pageSize: number = 50
   ): Promise<PaginatedResponse<Candidate>> {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       const unassignedData = allData.filter(item => !item.assigned_to);
-      
-      // Ordenar por prioridade e data
+
       unassignedData.sort((a, b) => {
         if (a.priority !== b.priority) {
           return (b.priority || 0) - (a.priority || 0);
         }
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateA - dateB;
       });
-      
+
       const from = (page - 1) * pageSize;
       const to = from + pageSize;
       const paginatedData = unassignedData.slice(from, to);
@@ -207,9 +240,9 @@ export const candidateService = {
 
   async getStatistics(userId?: string) {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       let filteredData = allData;
-      
+
       if (userId) {
         filteredData = allData.filter(item => item.assigned_to === userId);
       }
@@ -247,7 +280,7 @@ export const candidateService = {
         updates.notes = notes;
       }
 
-      await sheetsService.updateRow(id, updates);
+      await sheetsService.updateCandidate(id, updates);
     } catch (error) {
       console.error('Erro ao atualizar status do candidato:', error);
       throw error;
@@ -268,7 +301,7 @@ export const candidateService = {
         updated_at: new Date().toISOString(),
       };
 
-      await sheetsService.updateRow(id, updates);
+      await sheetsService.updateCandidate(id, updates);
     } catch (error) {
       console.error('Erro ao atribuir candidato:', error);
       throw error;
@@ -285,7 +318,7 @@ export const candidateService = {
         updated_at: new Date().toISOString(),
       };
 
-      await sheetsService.updateRow(id, updates);
+      await sheetsService.updateCandidate(id, updates);
     } catch (error) {
       console.error('Erro ao remover atribuição do candidato:', error);
       throw error;
@@ -301,7 +334,7 @@ export const candidateService = {
         updated_at: new Date().toISOString(),
       };
 
-      await sheetsService.insertRow(newCandidate);
+      await sheetsService.addCandidate(newCandidate);
       return newCandidate;
     } catch (error) {
       console.error('Erro ao criar candidato:', error);
@@ -316,16 +349,15 @@ export const candidateService = {
         updated_at: new Date().toISOString(),
       };
 
-      await sheetsService.updateRow(id, fullUpdates);
-      
-      // Buscar o candidato atualizado
-      const allData = await sheetsService.getRows();
-      const updatedCandidate = allData.find(item => item.id === id);
-      
+      await sheetsService.updateCandidate(id, fullUpdates);
+
+      const allData = await sheetsService.getCandidates();
+      const updatedCandidate = allData.find(item => item.id === id || item.CPF === id);
+
       if (!updatedCandidate) {
         throw new Error('Candidato não encontrado após atualização');
       }
-      
+
       return updatedCandidate;
     } catch (error) {
       console.error('Erro ao atualizar candidato:', error);
@@ -335,7 +367,7 @@ export const candidateService = {
 
   async deleteCandidate(id: string): Promise<void> {
     try {
-      await sheetsService.deleteRow(id);
+      await sheetsService.deleteCandidate(id);
     } catch (error) {
       console.error('Erro ao deletar candidato:', error);
       throw error;
@@ -344,7 +376,7 @@ export const candidateService = {
 
   async getAreas(): Promise<string[]> {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       const uniqueAreas = [...new Set(allData.map(c => c.AREAATUACAO))];
       return uniqueAreas.filter(area => area && area.trim() !== '');
     } catch (error) {
@@ -355,7 +387,7 @@ export const candidateService = {
 
   async getCargos(): Promise<string[]> {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       const uniqueCargos = [...new Set(allData.map(c => c.CARGOPRETENDIDO))];
       return uniqueCargos.filter(cargo => cargo && cargo.trim() !== '');
     } catch (error) {
@@ -366,7 +398,7 @@ export const candidateService = {
 
   async getVagaPCDOptions(): Promise<string[]> {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       const uniqueOptions = [...new Set(allData.map(c => c.VAGAPCD))];
       return uniqueOptions.filter(option => option && option.trim() !== '');
     } catch (error) {
@@ -377,22 +409,23 @@ export const candidateService = {
 
   async searchCandidates(query: string): Promise<Candidate[]> {
     try {
-      const allData = await sheetsService.getRows();
+      const allData = await sheetsService.getCandidates();
       const searchTerm = query.toLowerCase();
-      
+
       return allData.filter(item => {
         const searchableFields = [
           item.NOMECOMPLETO,
           item.NOMESOCIAL,
           item.CPF,
           item.CARGOPRETENDIDO,
-          item.registration_number
+          item.registration_number,
+          item.name
         ];
-        
-        return searchableFields.some(field => 
+
+        return searchableFields.some(field =>
           field && field.toString().toLowerCase().includes(searchTerm)
         );
-      }).slice(0, 10); // Limitar a 10 resultados
+      }).slice(0, 10);
     } catch (error) {
       console.error('Erro ao buscar candidatos:', error);
       throw error;
