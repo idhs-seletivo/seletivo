@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+// src/services/candidateService.ts
 
 export interface Candidate {
   id: string;
@@ -45,6 +45,68 @@ export interface CandidateFilters {
   VAGAPCD?: string;
 }
 
+// Serviço para Google Sheets - substitua com sua implementação real
+class GoogleSheetsService {
+  private spreadsheetId: string;
+  private sheetName: string = 'Candidates';
+
+  constructor() {
+    this.spreadsheetId = process.env.GOOGLE_SHEETS_ID || '';
+  }
+
+  async getRows(): Promise<any[]> {
+    // Implemente a lógica para buscar dados do Google Sheets
+    // Exemplo básico - substitua pela sua implementação real
+    return [];
+  }
+
+  async updateRow(id: string, updates: any): Promise<void> {
+    // Implemente a lógica para atualizar uma linha
+  }
+
+  async insertRow(data: any): Promise<void> {
+    // Implemente a lógica para inserir uma nova linha
+  }
+
+  async deleteRow(id: string): Promise<void> {
+    // Implemente a lógica para deletar uma linha
+  }
+}
+
+const sheetsService = new GoogleSheetsService();
+
+// Funções auxiliares para simular a lógica do Supabase
+const filterData = (data: any[], filters?: CandidateFilters): any[] => {
+  if (!filters) return data;
+
+  return data.filter(item => {
+    if (filters.status && item.status !== filters.status) return false;
+    if (filters.AREAATUACAO && item.AREAATUACAO !== filters.AREAATUACAO) return false;
+    if (filters.CARGOPRETENDIDO && item.CARGOPRETENDIDO !== filters.CARGOPRETENDIDO) return false;
+    if (filters.VAGAPCD && item.VAGAPCD !== filters.VAGAPCD) return false;
+    if (filters.assignedTo && item.assigned_to !== filters.assignedTo) return false;
+    
+    if (filters.search) {
+      const searchTerm = filters.search.toLowerCase();
+      const searchableFields = [
+        item.NOMECOMPLETO,
+        item.NOMESOCIAL,
+        item.CPF,
+        item.CARGOPRETENDIDO,
+        item.registration_number
+      ];
+      
+      const hasMatch = searchableFields.some(field => 
+        field && field.toString().toLowerCase().includes(searchTerm)
+      );
+      
+      if (!hasMatch) return false;
+    }
+    
+    return true;
+  });
+};
+
 export const candidateService = {
   async getCandidates(
     page: number = 1,
@@ -53,58 +115,31 @@ export const candidateService = {
     userId?: string
   ): Promise<PaginatedResponse<Candidate>> {
     try {
-      let query = supabase
-        .from('candidates')
-        .select('*', { count: 'exact' });
-
+      // Buscar dados do Google Sheets
+      const allData = await sheetsService.getRows();
+      
       // Aplicar filtros
-      if (filters?.status) {
-        query = query.eq('status', filters.status);
+      let filteredData = filterData(allData, filters);
+      
+      // Aplicar filtro de usuário se fornecido
+      if (userId && filters?.assignedTo === undefined) {
+        filteredData = filteredData.filter(item => item.assigned_to === userId);
       }
-
-      if (filters?.AREAATUACAO) {
-        query = query.eq('AREAATUACAO', filters.AREAATUACAO);
-      }
-
-      if (filters?.CARGOPRETENDIDO) {
-        query = query.eq('CARGOPRETENDIDO', filters.CARGOPRETENDIDO);
-      }
-
-      if (filters?.VAGAPCD) {
-        query = query.eq('VAGAPCD', filters.VAGAPCD);
-      }
-
-      if (filters?.search) {
-        query = query.or(`
-          NOMECOMPLETO.ilike.%${filters.search}%,
-          NOMESOCIAL.ilike.%${filters.search}%,
-          CPF.ilike.%${filters.search}%,
-          CARGOPRETENDIDO.ilike.%${filters.search}%,
-          registration_number.ilike.%${filters.search}%
-        `);
-      }
-
-      if (filters?.assignedTo) {
-        query = query.eq('assigned_to', filters.assignedTo);
-      }
-
+      
+      // Ordenar por data de criação (mais recente primeiro)
+      filteredData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      
+      // Paginação
       const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
-
-      query = query
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      const { data, error, count } = await query;
-
-      if (error) throw error;
+      const to = from + pageSize;
+      const paginatedData = filteredData.slice(from, to);
 
       return {
-        data: data || [],
-        count: count || 0,
+        data: paginatedData,
+        count: filteredData.length,
         page,
         pageSize,
-        totalPages: Math.ceil((count || 0) / pageSize),
+        totalPages: Math.ceil(filteredData.length / pageSize),
       };
     } catch (error) {
       console.error('Erro ao buscar candidatos:', error);
@@ -113,74 +148,76 @@ export const candidateService = {
   },
 
   async getCandidateById(id: string): Promise<Candidate | null> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data;
+    try {
+      const allData = await sheetsService.getRows();
+      return allData.find(item => item.id === id) || null;
+    } catch (error) {
+      console.error('Erro ao buscar candidato por ID:', error);
+      throw error;
+    }
   },
 
   async getCandidateByCPF(cpf: string): Promise<Candidate | null> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .select('*')
-      .eq('CPF', cpf)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data;
+    try {
+      const allData = await sheetsService.getRows();
+      return allData.find(item => item.CPF === cpf) || null;
+    } catch (error) {
+      console.error('Erro ao buscar candidato por CPF:', error);
+      throw error;
+    }
   },
 
   async getUnassignedCandidates(
     page: number = 1,
     pageSize: number = 50
   ): Promise<PaginatedResponse<Candidate>> {
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
+    try {
+      const allData = await sheetsService.getRows();
+      const unassignedData = allData.filter(item => !item.assigned_to);
+      
+      // Ordenar por prioridade e data
+      unassignedData.sort((a, b) => {
+        if (a.priority !== b.priority) {
+          return (b.priority || 0) - (a.priority || 0);
+        }
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+      
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize;
+      const paginatedData = unassignedData.slice(from, to);
 
-    const { data, error, count } = await supabase
-      .from('candidates')
-      .select('*', { count: 'exact' })
-      .is('assigned_to', null)
-      .order('priority', { ascending: false })
-      .order('created_at', { ascending: true })
-      .range(from, to);
-
-    if (error) throw error;
-
-    return {
-      data: data || [],
-      count: count || 0,
-      page,
-      pageSize,
-      totalPages: Math.ceil((count || 0) / pageSize),
-    };
+      return {
+        data: paginatedData,
+        count: unassignedData.length,
+        page,
+        pageSize,
+        totalPages: Math.ceil(unassignedData.length / pageSize),
+      };
+    } catch (error) {
+      console.error('Erro ao buscar candidatos não atribuídos:', error);
+      throw error;
+    }
   },
 
   async getStatistics(userId?: string) {
     try {
-      let query = supabase.from('candidates').select('status, AREAATUACAO, VAGAPCD');
-
+      const allData = await sheetsService.getRows();
+      let filteredData = allData;
+      
       if (userId) {
-        query = query.eq('assigned_to', userId);
+        filteredData = allData.filter(item => item.assigned_to === userId);
       }
 
-      const { data, error } = await query;
-
-      if (error) throw error;
-
       const stats = {
-        total: data?.length || 0,
-        pendente: data?.filter(c => c.status === 'pendente').length || 0,
-        em_analise: data?.filter(c => c.status === 'em_analise').length || 0,
-        concluido: data?.filter(c => c.status === 'concluido').length || 0,
-        administrativa: data?.filter(c => c.AREAATUACAO === 'Administrativa').length || 0,
-        assistencial: data?.filter(c => c.AREAATUACAO === 'Assistencial').length || 0,
-        pcd: data?.filter(c => c.VAGAPCD === 'Sim').length || 0,
-        nao_pcd: data?.filter(c => c.VAGAPCD === 'Não').length || 0,
+        total: filteredData.length,
+        pendente: filteredData.filter(c => c.status === 'pendente').length,
+        em_analise: filteredData.filter(c => c.status === 'em_analise').length,
+        concluido: filteredData.filter(c => c.status === 'concluido').length,
+        administrativa: filteredData.filter(c => c.AREAATUACAO === 'Administrativa').length,
+        assistencial: filteredData.filter(c => c.AREAATUACAO === 'Assistencial').length,
+        pcd: filteredData.filter(c => c.VAGAPCD === 'Sim').length,
+        nao_pcd: filteredData.filter(c => c.VAGAPCD === 'Não').length,
       };
 
       return stats;
@@ -205,12 +242,7 @@ export const candidateService = {
         updates.notes = notes;
       }
 
-      const { error } = await supabase
-        .from('candidates')
-        .update(updates)
-        .eq('id', id);
-
-      if (error) throw error;
+      await sheetsService.updateRow(id, updates);
     } catch (error) {
       console.error('Erro ao atualizar status do candidato:', error);
       throw error;
@@ -223,18 +255,15 @@ export const candidateService = {
     assignedBy: string
   ): Promise<void> {
     try {
-      const { error } = await supabase
-        .from('candidates')
-        .update({
-          assigned_to: assignedTo,
-          assigned_by: assignedBy,
-          assigned_at: new Date().toISOString(),
-          status: 'em_analise',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
+      const updates = {
+        assigned_to: assignedTo,
+        assigned_by: assignedBy,
+        assigned_at: new Date().toISOString(),
+        status: 'em_analise',
+        updated_at: new Date().toISOString(),
+      };
 
-      if (error) throw error;
+      await sheetsService.updateRow(id, updates);
     } catch (error) {
       console.error('Erro ao atribuir candidato:', error);
       throw error;
@@ -243,18 +272,15 @@ export const candidateService = {
 
   async unassignCandidate(id: string): Promise<void> {
     try {
-      const { error } = await supabase
-        .from('candidates')
-        .update({
-          assigned_to: null,
-          assigned_by: null,
-          assigned_at: null,
-          status: 'pendente',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
+      const updates = {
+        assigned_to: null,
+        assigned_by: null,
+        assigned_at: null,
+        status: 'pendente',
+        updated_at: new Date().toISOString(),
+      };
 
-      if (error) throw error;
+      await sheetsService.updateRow(id, updates);
     } catch (error) {
       console.error('Erro ao remover atribuição do candidato:', error);
       throw error;
@@ -262,115 +288,114 @@ export const candidateService = {
   },
 
   async createCandidate(candidate: Omit<Candidate, 'id' | 'created_at' | 'updated_at'>): Promise<Candidate> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .insert({
-        // Dados pessoais
-        registration_number: candidate.registration_number,
-        NOMECOMPLETO: candidate.NOMECOMPLETO,
-        NOMESOCIAL: candidate.NOMESOCIAL || '',
-        CPF: candidate.CPF,
-        VAGAPCD: candidate.VAGAPCD,
-        'LAUDO MEDICO': candidate['LAUDO MEDICO'] || '',
-        
-        // Dados profissionais
-        AREAATUACAO: candidate.AREAATUACAO,
-        CARGOPRETENDIDO: candidate.CARGOPRETENDIDO,
-        
-        // Documentos
-        CURRICULOVITAE: candidate.CURRICULOVITAE || '',
-        DOCUMENTOSPESSOAIS: candidate.DOCUMENTOSPESSOAIS || '',
-        DOCUMENTOSPROFISSIONAIS: candidate.DOCUMENTOSPROFISSIONAIS || '',
-        DIPLOMACERTIFICADO: candidate.DIPLOMACERTIFICADO || '',
-        DOCUMENTOSCONSELHO: candidate.DOCUMENTOSCONSELHO || '',
-        ESPECIALIZACOESCURSOS: candidate.ESPECIALIZACOESCURSOS || '',
-        
-        // Campos do sistema
-        status: candidate.status || 'pendente',
-        priority: candidate.priority || 0,
-        notes: candidate.notes || '',
-      })
-      .select()
-      .single();
+    try {
+      const newCandidate = {
+        ...candidate,
+        id: this.generateId(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-    if (error) throw error;
-    return data;
+      await sheetsService.insertRow(newCandidate);
+      return newCandidate;
+    } catch (error) {
+      console.error('Erro ao criar candidato:', error);
+      throw error;
+    }
   },
 
   async updateCandidate(id: string, updates: Partial<Candidate>): Promise<Candidate> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .update({
+    try {
+      const fullUpdates = {
         ...updates,
         updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
+      };
 
-    if (error) throw error;
-    return data;
+      await sheetsService.updateRow(id, fullUpdates);
+      
+      // Buscar o candidato atualizado
+      const allData = await sheetsService.getRows();
+      const updatedCandidate = allData.find(item => item.id === id);
+      
+      if (!updatedCandidate) {
+        throw new Error('Candidato não encontrado após atualização');
+      }
+      
+      return updatedCandidate;
+    } catch (error) {
+      console.error('Erro ao atualizar candidato:', error);
+      throw error;
+    }
   },
 
   async deleteCandidate(id: string): Promise<void> {
-    const { error } = await supabase
-      .from('candidates')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
+    try {
+      await sheetsService.deleteRow(id);
+    } catch (error) {
+      console.error('Erro ao deletar candidato:', error);
+      throw error;
+    }
   },
 
   async getAreas(): Promise<string[]> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .select('AREAATUACAO')
-      .order('AREAATUACAO');
-
-    if (error) throw error;
-
-    const uniqueAreas = [...new Set(data?.map(c => c.AREAATUACAO) || [])];
-    return uniqueAreas.filter(area => area && area.trim() !== '');
+    try {
+      const allData = await sheetsService.getRows();
+      const uniqueAreas = [...new Set(allData.map(c => c.AREAATUACAO))];
+      return uniqueAreas.filter(area => area && area.trim() !== '');
+    } catch (error) {
+      console.error('Erro ao buscar áreas:', error);
+      throw error;
+    }
   },
 
   async getCargos(): Promise<string[]> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .select('CARGOPRETENDIDO')
-      .order('CARGOPRETENDIDO');
-
-    if (error) throw error;
-
-    const uniqueCargos = [...new Set(data?.map(c => c.CARGOPRETENDIDO) || [])];
-    return uniqueCargos.filter(cargo => cargo && cargo.trim() !== '');
+    try {
+      const allData = await sheetsService.getRows();
+      const uniqueCargos = [...new Set(allData.map(c => c.CARGOPRETENDIDO))];
+      return uniqueCargos.filter(cargo => cargo && cargo.trim() !== '');
+    } catch (error) {
+      console.error('Erro ao buscar cargos:', error);
+      throw error;
+    }
   },
 
   async getVagaPCDOptions(): Promise<string[]> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .select('VAGAPCD')
-      .order('VAGAPCD');
-
-    if (error) throw error;
-
-    const uniqueOptions = [...new Set(data?.map(c => c.VAGAPCD) || [])];
-    return uniqueOptions.filter(option => option && option.trim() !== '');
+    try {
+      const allData = await sheetsService.getRows();
+      const uniqueOptions = [...new Set(allData.map(c => c.VAGAPCD))];
+      return uniqueOptions.filter(option => option && option.trim() !== '');
+    } catch (error) {
+      console.error('Erro ao buscar opções PCD:', error);
+      throw error;
+    }
   },
 
   async searchCandidates(query: string): Promise<Candidate[]> {
-    const { data, error } = await supabase
-      .from('candidates')
-      .select('*')
-      .or(`
-        NOMECOMPLETO.ilike.%${query}%,
-        NOMESOCIAL.ilike.%${query}%,
-        CPF.ilike.%${query}%,
-        CARGOPRETENDIDO.ilike.%${query}%,
-        registration_number.ilike.%${query}%
-      `)
-      .limit(10);
+    try {
+      const allData = await sheetsService.getRows();
+      const searchTerm = query.toLowerCase();
+      
+      return allData.filter(item => {
+        const searchableFields = [
+          item.NOMECOMPLETO,
+          item.NOMESOCIAL,
+          item.CPF,
+          item.CARGOPRETENDIDO,
+          item.registration_number
+        ];
+        
+        return searchableFields.some(field => 
+          field && field.toString().toLowerCase().includes(searchTerm)
+        );
+      }).slice(0, 10); // Limitar a 10 resultados
+    } catch (error) {
+      console.error('Erro ao buscar candidatos:', error);
+      throw error;
+    }
+  },
 
-    if (error) throw error;
-    return data || [];
+  // Função auxiliar para gerar IDs
+  private generateId(): string {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 };
