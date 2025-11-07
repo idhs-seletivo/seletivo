@@ -1,4 +1,3 @@
-import { supabase } from './supabaseClient';
 import { User } from '../contexts/AuthContext';
 
 export interface AssignmentRequest {
@@ -7,89 +6,111 @@ export interface AssignmentRequest {
   adminId: string;
 }
 
-export async function getUsers(): Promise<User[]> {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('active', true)
-    .order('name');
+// Serviço para comunicação com Google Sheets
+class GoogleSheetsService {
+  private scriptUrl: string;
 
-  if (error) throw error;
-  return data || [];
+  constructor(scriptUrl: string) {
+    this.scriptUrl = scriptUrl;
+  }
+
+  async fetchData(action: string, data?: any): Promise<any> {
+    try {
+      const formData = new FormData();
+      formData.append('action', action);
+      
+      if (data) {
+        formData.append('data', JSON.stringify(data));
+      }
+
+      const response = await fetch(this.scriptUrl, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro HTTP: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        return result.data;
+      } else {
+        throw new Error(result.error || 'Erro desconhecido');
+      }
+    } catch (error) {
+      console.error('Erro na comunicação com Google Apps Script:', error);
+      throw error;
+    }
+  }
+}
+
+// URL do seu Google Apps Script
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzeUN52MaVkpQsORTIIiAkhHSVrlVR82UrISGLOoeyWsHCJlseTPS1Te9Mst24AcfpBhA/exec';
+const sheetsService = new GoogleSheetsService(SCRIPT_URL);
+
+export async function getUsers(): Promise<User[]> {
+  try {
+    return await sheetsService.fetchData('getUsers');
+  } catch (error) {
+    console.error('Erro ao buscar usuários:', error);
+    throw error;
+  }
 }
 
 export async function getAnalysts(): Promise<User[]> {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('active', true)
-    .order('name');
-
-  if (error) throw error;
-  return data || [];
+  try {
+    const users = await sheetsService.fetchData('getUsers');
+    // Filtrar apenas analistas (role 'analista')
+    return users.filter((user: User) => user.role === 'analista' && user.active);
+  } catch (error) {
+    console.error('Erro ao buscar analistas:', error);
+    throw error;
+  }
 }
 
 export async function createUser(user: Omit<User, 'id' | 'active'>): Promise<User> {
-  const { data, error } = await supabase
-    .from('users')
-    .insert({
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      active: true,
-    })
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
+  try {
+    return await sheetsService.fetchData('createUser', user);
+  } catch (error) {
+    console.error('Erro ao criar usuário:', error);
+    throw error;
+  }
 }
 
 export async function updateUser(id: string, updates: Partial<User>): Promise<User> {
-  const { data, error } = await supabase
-    .from('users')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
+  try {
+    return await sheetsService.fetchData('updateUser', { id, updates });
+  } catch (error) {
+    console.error('Erro ao atualizar usuário:', error);
+    throw error;
+  }
 }
 
 export async function deactivateUser(id: string): Promise<void> {
-  const { error } = await supabase
-    .from('users')
-    .update({ active: false })
-    .eq('id', id);
-
-  if (error) throw error;
+  try {
+    await sheetsService.fetchData('deactivateUser', { id });
+  } catch (error) {
+    console.error('Erro ao desativar usuário:', error);
+    throw error;
+  }
 }
 
 export async function assignCandidates(request: AssignmentRequest): Promise<void> {
-  const { error } = await supabase
-    .from('candidates')
-    .update({
-      assigned_to: request.analystId,
-      assigned_by: request.adminId,
-      assigned_at: new Date().toISOString(),
-      status: 'pendente',
-    })
-    .in('id', request.candidateIds);
-
-  if (error) throw error;
+  try {
+    await sheetsService.fetchData('assignCandidates', request);
+  } catch (error) {
+    console.error('Erro ao atribuir candidatos:', error);
+    throw error;
+  }
 }
 
 export async function unassignCandidates(candidateIds: string[]): Promise<void> {
-  const { error } = await supabase
-    .from('candidates')
-    .update({
-      assigned_to: null,
-      assigned_by: null,
-      assigned_at: null,
-      status: 'pendente',
-    })
-    .in('id', candidateIds);
-
-  if (error) throw error;
+  try {
+    await sheetsService.fetchData('unassignCandidates', { candidateIds });
+  } catch (error) {
+    console.error('Erro ao remover atribuição de candidatos:', error);
+    throw error;
+  }
 }
