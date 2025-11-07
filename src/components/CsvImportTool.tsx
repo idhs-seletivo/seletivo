@@ -70,6 +70,12 @@ export default function CsvImportTool() {
     return result;
   }
 
+  function generateRegistrationNumber(): string {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000);
+    return `CAND-${timestamp}-${random}`;
+  }
+
   async function handleImport() {
     if (!file) return;
 
@@ -96,40 +102,48 @@ export default function CsvImportTool() {
             row[header] = values[index]?.trim().replace(/^"|"$/g, '') || '';
           });
 
-          const name = row['Nome Completo'] || row['Nome'] || row['name'] || row['nome'] || '';
-          const nomeSocial = row['Nome Social'] || row['nome_social'] || row['nomeSocial'] || '';
-          const cpf = row['CPF'] || row['cpf'] || '';
-          const registrationNumber = row['NÚMERO DE INSCRIÇÃO'] || row['Número de Inscrição'] || row['registration_number'] || row['inscricao'] || row['inscrição'] || `temp-${Date.now()}-${i}`;
-          const area = row['Área de atuação pretendida'] || row['Área'] || row['area'] || row['Area'] || '';
+          // Mapeamento direto para as colunas da sua planilha
+          const candidateData = {
+            registration_number: row['NÚMERO DE INSCRIÇÃO'] || generateRegistrationNumber(),
+            NOMECOMPLETO: row['NOMECOMPLETO'] || row['Nome Completo'] || '',
+            NOMESOCIAL: row['NOMESOCIAL'] || row['Nome Social'] || '',
+            CPF: row['CPF'] || row['cpf'] || '',
+            VAGAPCD: row['VAGAPCD'] || row['Vaga PCD'] || 'Não',
+            'LAUDO MEDICO': row['LAUDO MEDICO'] || row['Laudo Médico'] || '',
+            AREAATUACAO: row['AREAATUACAO'] || row['Área de Atuação'] || '',
+            CARGOPRETENDIDO: row['CARGOPRETENDIDO'] || row['Cargo Pretendido'] || '',
+            CURRICULOVITAE: row['CURRICULOVITAE'] || row['Currículo Vitae'] || '',
+            DOCUMENTOSPESSOAIS: row['DOCUMENTOSPESSOAIS'] || row['Documentos Pessoais'] || '',
+            DOCUMENTOSPROFISSIONAIS: row['DOCUMENTOSPROFISSIONAIS'] || row['Documentos Profissionais'] || '',
+            DIPLOMACERTIFICADO: row['DIPLOMACERTIFICADO'] || row['Diploma/Certificado'] || '',
+            DOCUMENTOSCONSELHO: row['DOCUMENTOSCONSELHO'] || row['Documentos do Conselho'] || '',
+            ESPECIALIZACOESCURSOS: row['ESPECIALIZACOESCURSOS'] || row['Especializações/Cursos'] || '',
+            status: 'pendente' as const,
+            priority: 0,
+            notes: 'Importado via CSV'
+          };
 
-          await candidateService.createCandidate({
-            registration_number: registrationNumber,
-            name: name,
-            area: area,
-            status: 'pendente',
-            priority: parseInt(row['priority'] || row['prioridade'] || '0'),
-            data: {
-              cpf: cpf,
-              nome_social: nomeSocial,
-              cargo_administrativo: row['Cargo pretendido (ADMINISTRATIVO)'] || '',
-              cargo_assistencial: row['Cargo pretendido (ASSISTENCIAL)'] || '',
-              adm_curriculo: row['ADM - CURRICULO'] || '',
-              adm_diploma: row['ADM - DIPLOMA OU CERTIFICADO DE ESCOLARIDADE'] || '',
-              adm_documentos: row['ADM - DOCUMENTOS PESSOAIS OBRIGATÓRIOS'] || '',
-              adm_cursos: row['ADM - CURSOS E ESPECIALIZAÇÕES'] || '',
-              assist_curriculo: row['ASSIST - CURRICULO VITAE'] || '',
-              assist_diploma: row['ASSIST - DIPLOMA OU CERTIFICADO DE ESCOLARIDADE'] || '',
-              assist_carteira: row['ASSIST - CARTEIRA DO CONSELHO'] || '',
-              assist_cursos: row['ASSIST - CURSOS E ESPECIALIZAÇÕES'] || '',
-              assist_documentos: row['ASSIST - DOCUMENTOS PESSOAIS OBRIGATÓRIOS'] || '',
-              ...row
-            },
-          });
+          // Validação básica
+          if (!candidateData.NOMECOMPLETO.trim()) {
+            throw new Error('Nome completo é obrigatório');
+          }
 
+          if (!candidateData.CPF.trim()) {
+            throw new Error('CPF é obrigatório');
+          }
+
+          // Verificar se CPF já existe
+          const existingCandidate = await candidateService.getCandidateByCPF(candidateData.CPF);
+          if (existingCandidate) {
+            throw new Error(`CPF ${candidateData.CPF} já cadastrado`);
+          }
+
+          await candidateService.createCandidate(candidateData);
           success++;
         } catch (error) {
           failed++;
-          errors.push(`Linha ${i + 1}: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+          const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+          errors.push(`Linha ${i + 1}: ${errorMessage}`);
         }
 
         const current = i;
@@ -181,10 +195,22 @@ export default function CsvImportTool() {
           </div>
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="font-semibold text-blue-900 mb-2">Informação:</h3>
-            <p className="text-sm text-blue-800">
-              Todos os campos são opcionais. O sistema gerará automaticamente o número de inscrição se não fornecido.
-            </p>
+            <h3 className="font-semibold text-blue-900 mb-2">Colunas esperadas:</h3>
+            <div className="text-sm text-blue-800 grid grid-cols-2 gap-1">
+              <div>• NOMECOMPLETO</div>
+              <div>• NOMESOCIAL</div>
+              <div>• CPF</div>
+              <div>• VAGAPCD</div>
+              <div>• LAUDO MEDICO</div>
+              <div>• AREAATUACAO</div>
+              <div>• CARGOPRETENDIDO</div>
+              <div>• CURRICULOVITAE</div>
+              <div>• DOCUMENTOSPESSOAIS</div>
+              <div>• DOCUMENTOSPROFISSIONAIS</div>
+              <div>• DIPLOMACERTIFICADO</div>
+              <div>• DOCUMENTOSCONSELHO</div>
+              <div>• ESPECIALIZACOESCURSOS</div>
+            </div>
           </div>
 
           {!file && (
@@ -232,14 +258,14 @@ export default function CsvImportTool() {
                   <h3 className="font-semibold text-gray-800 mb-2">
                     Prévia (primeiras 5 linhas):
                   </h3>
-                  <div className="overflow-auto border rounded-lg">
-                    <table className="min-w-full divide-y divide-gray-200">
+                  <div className="overflow-auto border rounded-lg max-h-60">
+                    <table className="min-w-full divide-y divide-gray-200 text-xs">
                       <thead className="bg-gray-50">
                         <tr>
                           {Object.keys(preview[0]).map(key => (
                             <th
                               key={key}
-                              className="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase"
+                              className="px-3 py-2 text-left font-medium text-gray-700 uppercase tracking-wider"
                             >
                               {key}
                             </th>
@@ -252,7 +278,8 @@ export default function CsvImportTool() {
                             {Object.values(row).map((value: any, cellIdx) => (
                               <td
                                 key={cellIdx}
-                                className="px-4 py-2 text-sm text-gray-900"
+                                className="px-3 py-2 text-gray-900 truncate max-w-xs"
+                                title={value}
                               >
                                 {value}
                               </td>
@@ -314,15 +341,29 @@ export default function CsvImportTool() {
 
           {result && (
             <div className="space-y-4">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 text-green-800 mb-2">
-                  <CheckCircle className="w-5 h-5" />
-                  <h3 className="font-semibold">Importação Concluída</h3>
+              <div className={`border rounded-lg p-4 ${
+                result.failed === 0 
+                  ? 'bg-green-50 border-green-200' 
+                  : 'bg-yellow-50 border-yellow-200'
+              }`}>
+                <div className={`flex items-center gap-2 mb-2 ${
+                  result.failed === 0 ? 'text-green-800' : 'text-yellow-800'
+                }`}>
+                  {result.failed === 0 ? (
+                    <CheckCircle className="w-5 h-5" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5" />
+                  )}
+                  <h3 className="font-semibold">
+                    {result.failed === 0 ? 'Importação Concluída' : 'Importação Parcial'}
+                  </h3>
                 </div>
-                <div className="text-sm text-green-700 space-y-1">
+                <div className={`text-sm space-y-1 ${
+                  result.failed === 0 ? 'text-green-700' : 'text-yellow-700'
+                }`}>
                   <p>✓ {result.success} candidatos importados com sucesso</p>
                   {result.failed > 0 && (
-                    <p className="text-red-700">✗ {result.failed} candidatos falharam</p>
+                    <p>✗ {result.failed} candidatos falharam</p>
                   )}
                 </div>
               </div>
