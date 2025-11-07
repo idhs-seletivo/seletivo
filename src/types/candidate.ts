@@ -1,25 +1,38 @@
 // ✅ TIPOS PRINCIPAIS
 export interface Candidate {
-  submissionDate: string;
-  name: string;
-  nome_social?: string;
-  cpf: string;
-  area: 'Administrativa' | 'Assistencial';
-  cargoAdministrativo: string;
-  cargoAssistencial: string;
-  admCurriculo: string;
-  admDiploma: string;
-  admDocumentos: string;
-  admCursos: string;
-  assistCurriculo: string;
-  assistDiploma: string;
-  assistCarteira: string;
-  assistCursos: string;
-  assistDocumentos: string;
-  registrationNumber: string;
-  statusTriagem: 'Classificado' | 'Desclassificado' | 'Revisar';
-  dataHoraTriagem: string;
-  analistaTriagem: string;
+  // Dados básicos do candidato
+  id: string;
+  registration_number: string;
+  NOMECOMPLETO: string;
+  NOMESOCIAL?: string;
+  CPF: string;
+  VAGAPCD: string;
+  'LAUDO MEDICO'?: string;
+  AREAATUACAO: string;
+  CARGOPRETENDIDO: string;
+  
+  // Documentos
+  CURRICULOVITAE?: string;
+  DOCUMENTOSPESSOAIS?: string;
+  DOCUMENTOSPROFISSIONAIS?: string;
+  DIPLOMACERTIFICADO?: string;
+  DOCUMENTOSCONSELHO?: string;
+  ESPECIALIZACOESCURSOS?: string;
+  
+  // Sistema de triagem
+  status: 'pendente' | 'em_analise' | 'concluido';
+  status_triagem?: 'Classificado' | 'Desclassificado' | 'Revisar';
+  data_hora_triagem?: string;
+  analista_triagem?: string;
+  assigned_to?: string;
+  assigned_by?: string;
+  assigned_at?: string;
+  priority?: number;
+  notes?: string;
+  
+  // Timestamps
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface AnalystSession {
@@ -40,6 +53,7 @@ export interface CandidateReview {
   session_id: string;
   review_duration_seconds?: number;
   review_date?: string;
+  notes?: string;
 }
 
 export interface SessionMetrics {
@@ -48,6 +62,9 @@ export interface SessionMetrics {
   classified: number;
   disqualified: number;
   review: number;
+  administrativa: number;
+  assistencial: number;
+  pcd: number;
 }
 
 // ✅ ENUMS
@@ -65,9 +82,22 @@ export enum AreaAtuacao {
 export enum DocumentType {
   CURRICULO = 'curriculo',
   DIPLOMA = 'diploma', 
-  CARTEIRA = 'carteira',
-  DOCUMENTOS_PESSOAIS = 'documentos',
-  CURSOS = 'cursos'
+  CARTEIRA_CONSELHO = 'carteira_conselho',
+  DOCUMENTOS_PESSOAIS = 'documentos_pessoais',
+  DOCUMENTOS_PROFISSIONAIS = 'documentos_profissionais',
+  CURSOS_ESPECIALIZACOES = 'cursos_especializacoes',
+  LAUDO_MEDICO = 'laudo_medico'
+}
+
+export enum VagaPCD {
+  SIM = 'Sim',
+  NAO = 'Não'
+}
+
+export enum StatusSistema {
+  PENDENTE = 'pendente',
+  EM_ANALISE = 'em_analise',
+  CONCLUIDO = 'concluido'
 }
 
 // ✅ TIPOS DE UTILIDADE
@@ -80,6 +110,55 @@ export type ApiResponse<T> = {
 
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
 
+// ✅ TIPOS PARA FILTROS
+export interface CandidateFilters {
+  status?: string;
+  AREAATUACAO?: string;
+  search?: string;
+  assignedTo?: string;
+  CARGOPRETENDIDO?: string;
+  VAGAPCD?: string;
+  status_triagem?: string;
+}
+
+// ✅ TIPO PARA RESPOSTA PAGINADA
+export interface PaginatedResponse<T> {
+  data: T[];
+  count: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+// ✅ TIPO PARA ESTATÍSTICAS
+export interface Statistics {
+  total: number;
+  pendente: number;
+  em_analise: number;
+  concluido: number;
+  administrativa: number;
+  assistencial: number;
+  pcd: number;
+  nao_pcd: number;
+  classificados: number;
+  desclassificados: number;
+  revisar: number;
+}
+
+// ✅ TIPO PARA IMPORTACAO
+export interface ImportResult {
+  success: number;
+  failed: number;
+  errors: string[];
+}
+
+// ✅ TIPO PARA ATRIBUIÇÃO
+export interface AssignmentRequest {
+  candidateIds: string[];
+  analystId: string;
+  adminId: string;
+}
+
 // ✅ EXPORT DEFAULT PARA IMPORTAÇÃO FÁCIL
 export default {
   Candidate,
@@ -88,5 +167,12 @@ export default {
   SessionMetrics,
   CandidateStatus,
   AreaAtuacao,
-  DocumentType
+  DocumentType,
+  VagaPCD,
+  StatusSistema,
+  CandidateFilters,
+  PaginatedResponse,
+  Statistics,
+  ImportResult,
+  AssignmentRequest
 };
