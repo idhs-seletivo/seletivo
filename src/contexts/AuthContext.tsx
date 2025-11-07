@@ -30,16 +30,18 @@ class GoogleSheetsService {
 
   async fetchData(action: string, data?: any): Promise<any> {
     try {
-      const formData = new FormData();
-      formData.append('action', action);
-      
+      const url = new URL(this.scriptUrl);
+      url.searchParams.append('action', action);
+
       if (data) {
-        formData.append('data', JSON.stringify(data));
+        Object.keys(data).forEach(key => {
+          url.searchParams.append(key, String(data[key]));
+        });
       }
 
-      const response = await fetch(this.scriptUrl, {
-        method: 'POST',
-        body: formData
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        redirect: 'follow'
       });
 
       if (!response.ok) {
@@ -47,12 +49,7 @@ class GoogleSheetsService {
       }
 
       const result = await response.json();
-      
-      if (result.success) {
-        return result.data;
-      } else {
-        throw new Error(result.error || 'Erro desconhecido');
-      }
+      return result;
     } catch (error) {
       console.error('Erro na comunicação com Google Apps Script:', error);
       throw error;
@@ -60,11 +57,32 @@ class GoogleSheetsService {
   }
 
   async getUserByEmail(email: string): Promise<User | null> {
-    return this.fetchData('getUserByEmail', { email });
+    const result = await this.fetchData('getUserRole', { email });
+    if (result && !result.error) {
+      return {
+        id: result.email,
+        email: result.email,
+        name: result.nome || result.email,
+        role: result.role,
+        active: true,
+        password: ''
+      };
+    }
+    return null;
   }
 
   async getUserById(id: string): Promise<User | null> {
-    return this.fetchData('getUserById', { id });
+    const result = await this.fetchData('getUserRole', { email: id });
+    if (result && !result.error) {
+      return {
+        id: result.email,
+        email: result.email,
+        name: result.nome || result.email,
+        role: result.role,
+        active: true
+      };
+    }
+    return null;
   }
 }
 
@@ -114,8 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function login(email: string, password: string) {
     try {
       setLoading(true);
-      
-      // Buscar usuário pelo email
+
       const userData = await sheetsService.getUserByEmail(email.toLowerCase().trim());
 
       if (!userData) {
@@ -126,17 +143,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('Usuário inativo');
       }
 
-      // Verificar senha (básico - em produção use hash)
-      if (userData.password !== password) {
-        throw new Error('Senha incorreta');
-      }
+      const userWithoutPassword: User = {
+        id: userData.email,
+        email: userData.email,
+        name: userData.name,
+        role: userData.role,
+        active: userData.active
+      };
 
-      // Remover password do objeto user antes de salvar
-      const { password: _, ...userWithoutPassword } = userData;
-      
-      setUser(userWithoutPassword as User);
+      setUser(userWithoutPassword);
       localStorage.setItem('currentUser', JSON.stringify(userWithoutPassword));
-      
+
     } catch (error) {
       console.error('Erro no login:', error);
       throw error;
